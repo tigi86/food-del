@@ -5,29 +5,50 @@ import { toast } from "react-toastify";
 
 const List = ({ url }) => {
   const [list, setList] = useState([]);
-  const fetchList = async () => {
-    const response = await axios.get(`${url}/api/food/list`);
+  const [loading, setLoading] = useState(true);
 
-    if (response.data.success) {
-      setList(response.data.data);
-    } else {
-      toast.error("Error");
+  const fetchList = async () => {
+    try {
+      const response = await axios.get(`${url}/api/food/list`);
+
+      console.log("API Response:", response.data); // Debug log
+
+      if (response.data.success) {
+        // Match the backend response structure
+        setList(response.data.foods || []);
+      } else {
+        toast.error(response.data.message || "Failed to fetch list");
+      }
+    } catch (error) {
+      console.error("Fetch error details:", {
+        error: error.response?.data || error.message,
+        status: error.response?.status,
+      });
+      toast.error("Failed to load food list. Check console for details.");
+    } finally {
+      setLoading(false);
     }
   };
 
   const removeFood = async (foodId) => {
-    const response = await axios.post(`${url}/api/food/remove`, { id: foodId });
-    await fetchList();
-    if (response.data.success) {
-      toast.success(response.data.message);
-    } else {
-      toast.error("Error");
+    try {
+      const response = await axios.post(`${url}/api/food/remove`, {
+        id: foodId,
+      });
+      if (response.data.success) {
+        toast.success(response.data.message);
+        await fetchList(); // Refresh the list after removal
+      }
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Failed to remove item");
     }
   };
 
   useEffect(() => {
     fetchList();
   }, []);
+
+  if (loading) return <div className="list add flex-col">Loading...</div>;
 
   return (
     <div className="list add flex-col">
@@ -40,19 +61,30 @@ const List = ({ url }) => {
           <b>Price</b>
           <b>Action</b>
         </div>
-        {list.map((item, index) => {
-          return (
-            <div key={index} className="list-table-format">
-              <img src={`${url}/images/` + item.image} alt="" />
+        {list?.length > 0 ? (
+          list.map((item) => (
+            <div key={item._id} className="list-table-format">
+              <img
+                src={item.image} // Directly use Cloudinary URL
+                alt={item.name}
+                onError={(e) => {
+                  e.target.src = "placeholder-image-url"; // Fallback image
+                }}
+              />
               <p>{item.name}</p>
               <p>{item.category}</p>
               <p>${item.price}</p>
-              <p onClick={() => removeFood(item._id)} className="cursor">
+              <button
+                onClick={() => removeFood(item._id)}
+                className="cursor remove-btn"
+              >
                 X
-              </p>
+              </button>
             </div>
-          );
-        })}
+          ))
+        ) : (
+          <p className="no-items">No food items found</p>
+        )}
       </div>
     </div>
   );

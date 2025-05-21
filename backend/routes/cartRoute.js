@@ -1,15 +1,16 @@
 import express from "express";
 import {
+  getCart,
   addToCart,
   removeFromCart,
-  getCart,
 } from "../controllers/cartController.js";
 import authMiddleware from "../middleware/auth.js";
 
-const cartRouter = express.Router();
+const router = express.Router();
 
-cartRouter.post("/add", authMiddleware, addToCart);
-cartRouter.post("/remove", authMiddleware, removeFromCart);
-cartRouter.post("/get", authMiddleware, getCart);
+// Correct endpoint paths
+router.get("/get", authMiddleware, getCart);  // Changed from POST to GET
+router.post("/add", authMiddleware, addToCart);
+router.post("/remove", authMiddleware, removeFromCart);
 
-export default cartRouter;
+export default router;

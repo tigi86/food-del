@@ -15,28 +15,45 @@ const LoginPopup = ({ setShowLogin }) => {
     confirmPassword: "",
   });
   const [passwordError, setPasswordError] = useState("");
-  const [isVerified, setIsVerified] = useState(false); // New state to track verification
+  const [isVerified, setIsVerified] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
 
   const onChangeHandler = (event) => {
-    const name = event.target.name;
-    const value = event.target.value;
-    setData((data) => ({ ...data, [name]: value }));
+    const { name, value } = event.target;
+    setData((prev) => ({ ...prev, [name]: value }));
 
-    // Clear password error when user types
+    // Clear errors when typing
     if (name === "newPassword" || name === "confirmPassword") {
       setPasswordError("");
     }
+    if (errorMessage) setErrorMessage("");
+  };
+
+  const validateEmail = (email) => {
+    const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return re.test(email);
+  };
+
+  const validatePassword = (password) => {
+    return password.length >= 8;
   };
 
   const onLogin = async (event) => {
     event.preventDefault();
+    setIsLoading(true);
+    setErrorMessage("");
 
-    // For forgot password flow
-    if (currState === "Forgot Password") {
-      // Check if we're in the first step (verifying user) or second step (updating password)
-      if (!isVerified) {
-        // First step - verify user
-        try {
+    try {
+      // Forgot Password flow
+      if (currState === "Forgot Password") {
+        if (!isVerified) {
+          // First step - verify user
+          if (!data.name || !data.email) {
+            setErrorMessage("Please fill in all fields");
+            return;
+          }
+
           const response = await axios.post(
             `${url}/api/user/verify-forgot-password`,
             {
@@ -44,77 +61,87 @@ const LoginPopup = ({ setShowLogin }) => {
               email: data.email,
             }
           );
+
           if (response.data.success) {
-            // User verified, show password fields
             setIsVerified(true);
-            setData((prev) => ({
-              ...prev,
-              newPassword: "",
-              confirmPassword: "",
-            }));
           } else {
-            alert(response.data.message);
+            setErrorMessage(response.data.message || "Verification failed");
           }
-        } catch (error) {
-          alert("Error verifying user. Please try again.");
+          return;
         }
-        return;
-      }
 
-      // Second step - update password
-      if (data.newPassword !== data.confirmPassword) {
-        setPasswordError("Passwords do not match");
-        return;
-      }
+        // Second step - update password
+        if (data.newPassword !== data.confirmPassword) {
+          setPasswordError("Passwords do not match");
+          return;
+        }
 
-      try {
+        if (!validatePassword(data.newPassword)) {
+          setPasswordError("Password must be at least 8 characters");
+          return;
+        }
+
         const response = await axios.post(`${url}/api/user/reset-password`, {
           email: data.email,
           newPassword: data.newPassword,
         });
+
         if (response.data.success) {
           alert(
             "Password updated successfully! Please login with your new password."
           );
           setCurrState("Login");
-          setIsVerified(false);
-          setData({
-            name: "",
-            email: "",
-            password: "",
-            newPassword: "",
-            confirmPassword: "",
-          });
+          resetForm();
         } else {
-          alert(response.data.message);
+          setErrorMessage(response.data.message || "Password update failed");
         }
-      } catch (error) {
-        alert("Error updating password. Please try again.");
+        return;
       }
-      return;
-    }
 
-    // Original login/signup logic
-    let newUrl = url;
-    if (currState === "Login") {
-      newUrl += "/api/user/login";
-    } else {
-      newUrl += "/api/user/register";
-    }
+      // Login/Signup validation
+      if (!data.email || !validateEmail(data.email)) {
+        setErrorMessage("Please enter a valid email");
+        return;
+      }
 
-    const response = await axios.post(newUrl, data);
-    if (response.data.success) {
-      setToken(response.data.token);
-      localStorage.setItem("token", response.data.token);
-      setShowLogin(false);
-    } else {
-      alert(response.data.message);
+      if (currState !== "Login" && !data.name) {
+        setErrorMessage("Please enter your name");
+        return;
+      }
+
+      if (!data.password || !validatePassword(data.password)) {
+        setErrorMessage("Password must be at least 8 characters");
+        return;
+      }
+
+      // Make API request
+      const endpoint = currState === "Login" ? "login" : "register";
+      const response = await axios.post(`${url}/api/user/${endpoint}`, {
+        email: data.email,
+        password: data.password,
+        ...(currState !== "Login" && { name: data.name }),
+      });
+
+      if (response.data.success) {
+        setToken(response.data.token);
+        localStorage.setItem("token", response.data.token);
+        setShowLogin(false);
+      } else {
+        setErrorMessage(response.data.message || "Authentication failed");
+      }
+    } catch (error) {
+      console.error("Authentication error:", error);
+      setErrorMessage(
+        error.response?.data?.message ||
+          error.message ||
+          "An error occurred. Please try again."
+      );
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  const handleForgotPassword = () => {
-    setCurrState("Forgot Password");
-    setIsVerified(false); // Reset verification state
+  const resetForm = () => {
     setData({
       name: "",
       email: "",
@@ -123,6 +150,18 @@ const LoginPopup = ({ setShowLogin }) => {
       confirmPassword: "",
     });
     setPasswordError("");
+    setIsVerified(false);
+    setErrorMessage("");
+  };
+
+  const handleForgotPassword = () => {
+    setCurrState("Forgot Password");
+    resetForm();
+  };
+
+  const switchState = (newState) => {
+    setCurrState(newState);
+    resetForm();
   };
 
   return (
@@ -133,9 +172,13 @@ const LoginPopup = ({ setShowLogin }) => {
           <img
             onClick={() => setShowLogin(false)}
             src={assets.cross_icon}
-            alt=""
+            alt="Close"
           />
         </div>
+
+        {errorMessage && (
+          <div className="login-error-message">{errorMessage}</div>
+        )}
 
         <div className="login-popup-input">
           {currState === "Login" ? (
@@ -183,7 +226,7 @@ const LoginPopup = ({ setShowLogin }) => {
                 onChange={onChangeHandler}
                 value={data.password}
                 type="password"
-                placeholder="Password"
+                placeholder="Password (min 8 characters)"
                 required
               />
             </>
@@ -218,7 +261,7 @@ const LoginPopup = ({ setShowLogin }) => {
                     onChange={onChangeHandler}
                     value={data.newPassword}
                     type="password"
-                    placeholder="New Password"
+                    placeholder="New Password (min 8 characters)"
                     required
                   />
                   <input
@@ -241,8 +284,10 @@ const LoginPopup = ({ setShowLogin }) => {
           )}
         </div>
 
-        <button type="submit">
-          {currState === "Sign Up"
+        <button type="submit" disabled={isLoading}>
+          {isLoading
+            ? "Processing..."
+            : currState === "Sign Up"
             ? "Create account"
             : currState === "Forgot Password"
             ? isVerified
@@ -261,24 +306,17 @@ const LoginPopup = ({ setShowLogin }) => {
         {currState === "Login" ? (
           <p>
             Create a new account?{" "}
-            <span onClick={() => setCurrState("Sign Up")}>Click here</span>
+            <span onClick={() => switchState("Sign Up")}>Click here</span>
           </p>
         ) : currState === "Sign Up" ? (
           <p>
             Already have an account?{" "}
-            <span onClick={() => setCurrState("Login")}>Login here</span>
+            <span onClick={() => switchState("Login")}>Login here</span>
           </p>
         ) : (
           <p>
             Remember your password?{" "}
-            <span
-              onClick={() => {
-                setCurrState("Login");
-                setIsVerified(false);
-              }}
-            >
-              Login here
-            </span>
+            <span onClick={() => switchState("Login")}>Login here</span>
           </p>
         )}
       </form>

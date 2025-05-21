@@ -3,54 +3,112 @@ import userModel from "../models/userModel.js";
 import Stripe from "stripe";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
-//placing user order for frontend
+
 const placeOrder = async (req, res) => {
   const frontend_url = "http://localhost:5173";
   try {
+    // Get user ID from authenticated user
+
+    const userId = req.user.id;
+
+    // Validate required fields with better error messages
+    if (!req.body.items || req.body.items.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Your cart is empty",
+      });
+    }
+
+    if (!req.body.amount || req.body.amount <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid order amount",
+      });
+    }
+
+    if (!req.body.address) {
+      return res.status(400).json({
+        success: false,
+        message: "Shipping address is required",
+      });
+    }
+
+    // Create new order
     const newOrder = new orderModel({
-      userId: req.body.userId,
+      userId,
       items: req.body.items,
       amount: req.body.amount,
       address: req.body.address,
+      status: "Food processing",
+      payment: false,
     });
+
     await newOrder.save();
-    await userModel.findByIdAndUpdate(req.body.userId, { cartDta: {} });
 
-    const line_items = req.body.items.map((item) => ({
-      price_data: {
-        currency: "usd",
-        product_data: {
-          name: item.name,
+    // Clear user's cart with error handling
+    try {
+      await userModel.findByIdAndUpdate(userId, { cartData: {} });
+    } catch (cartError) {
+      console.error("Error clearing cart:", cartError);
+      // Continue with order even if cart clearing fails
+    }
+
+    // Prepare Stripe line items with validation
+    const line_items = req.body.items.map((item) => {
+      if (!item.price || !item.quantity) {
+        throw new Error("Invalid item in cart");
+      }
+      return {
+        price_data: {
+          currency: "usd",
+          product_data: {
+            name: item.name || "Unnamed Item",
+          },
+          unit_amount: Math.round(item.price * 100),
         },
-        unit_amount: item.price * 100,
-      },
-      quantity: item.quantity,
-    }));
+        quantity: item.quantity,
+      };
+    });
 
+    // Add delivery fee
     line_items.push({
       price_data: {
         currency: "usd",
         product_data: {
           name: "Delivery charges",
         },
-        unit_amount: 2 * 100,
+        unit_amount: 200,
       },
       quantity: 1,
     });
 
-    const session = await stripe.checkout.sessions.create({
-      line_items: line_items,
-      mode: "payment",
-      success_url: `${frontend_url}/verify?success=true&orderId=${newOrder._id}`,
-      cancel_url: `${frontend_url}/verify?success=false&orderId=${newOrder._id}`,
+    // Create Stripe session with timeout
+    const session = await stripe.checkout.sessions.create(
+      {
+        payment_method_types: ["card"],
+        line_items,
+        mode: "payment",
+        success_url: `${frontend_url}/verify?success=true&orderId=${newOrder._id}`,
+        cancel_url: `${frontend_url}/verify?success=false&orderId=${newOrder._id}`,
+      },
+      { timeout: 10000 }
+    ); // 10 second timeout
+
+    res.json({
+      success: true,
+      session_url: session.url,
+      orderId: newOrder._id, // Return order ID for reference
     });
-    res.json({ success: true, session_url: session.url });
   } catch (error) {
-    console.log(error);
-    res.json({ success: false, message: "Error" });
+    console.error("Order placement error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message || "Failed to process your order",
+      errorDetails:
+        process.env.NODE_ENV === "development" ? error.stack : undefined,
+    });
   }
 };
-
 const verifyOrder = async (req, res) => {
   const { orderId, success } = req.body;
   try {
